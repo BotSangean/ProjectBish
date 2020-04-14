@@ -171,6 +171,8 @@ async def create_app(gdrive):
         creds = await generate_credentials(gdrive)
     if creds is None:
         return("`Failed to load credentials...`")
+    else:
+        await gdrive.respond(creds)
     service = build('drive', 'v3', credentials=creds, cache_discovery=False)
     return service
 
