@@ -4,12 +4,12 @@
 """ - ProjectBish Google Drive managers - """
 import os
 import pickle
-import codecs
+import base64
 import asyncio
 import math
 import time
 import re
-import binascii
+import json
 from os.path import isfile, isdir, join
 from mimetypes import guess_type
 
@@ -21,10 +21,11 @@ from googleapiclient.errors import HttpError
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
 
+import userbot.modules.sql_helper.google_drive_sql as sql
 from userbot import (G_DRIVE_CLIENT_ID, G_DRIVE_CLIENT_SECRET,
                      G_DRIVE_AUTH_TOKEN_DATA, BOTLOG_CHATID,
                      TEMP_DOWNLOAD_DIRECTORY, CMD_HELP, LOGS,
-                     G_DRIVE_FOLDER_ID)
+                     G_DRIVE_FOLDER_ID, G_DRIVE_DATA)
 from userbot.events import register
 from userbot.modules.upload_download import humanbytes, time_formatter
 from userbot.modules.aria import aria2, check_metadata
@@ -109,115 +110,67 @@ async def progress(current, total, gdrive, start, type_of_ps, file_name=None):
 
 async def generate_credentials(gdrive):
     """ - Generate credentials - """
-    error_msg = (
-        "`[TOKEN - ERROR]`\n\n"
-        " • `Status :` **RISK**\n"
-        " • `Reason :` There is data corruption or a security violation.\n\n"
-        "`It's probably your` **G_DRIVE_TOKEN_DATA** `is not match\n"
-        "Or you still use the old gdrive module token data!.\n"
-        "Please change it, by deleting` **G_DRIVE_TOKEN_DATA** "
-        "`from your ConfigVars and regenerate the token and put it again`."
+    configs = json.loads(G_DRIVE_DATA)
+    """ - Create credentials - """
+    await gdrive.edit("`Creating credentials...`")
+    flow = InstalledAppFlow.from_client_config(
+         configs, SCOPES, redirect_uri=REDIRECT_URI)
+    auth_url, _ = flow.authorization_url(
+                access_type='offline', prompt='consent')
+    msg = await gdrive.respond(
+        "`Go to your BOTLOG chat to authenticate...`"
     )
-    configs = {
-        "installed": {
-            "client_id": G_DRIVE_CLIENT_ID,
-            "client_secret": G_DRIVE_CLIENT_SECRET,
-            "auth_uri": GOOGLE_AUTH_URI,
-            "token_uri": GOOGLE_TOKEN_URI,
-        }
-    }
-    creds = None
-    try:
-        if G_DRIVE_AUTH_TOKEN_DATA is not None:
-            """ - Repack credential objects from strings - """
-            try:
-                creds = pickle.loads(
-                      codecs.decode(G_DRIVE_AUTH_TOKEN_DATA.encode(), "base64"))
-            except pickle.UnpicklingError:
-                return await gdrive.edit(error_msg)
-        else:
-            if isfile("auth.txt"):
-                """ - Load credentials from file if exists - """
-                with open("auth.txt", "r") as token:
-                    creds = token.read()
-                    try:
-                        creds = pickle.loads(
-                              codecs.decode(creds.encode(), "base64"))
-                    except pickle.UnpicklingError:
-                        return await gdrive.edit(error_msg)
-    except binascii.Error as e:
-        return await gdrive.edit(
-            "`[TOKEN - ERROR]`\n\n"
-            " • `Status :` **BAD**\n"
-            " • `Reason :` Invalid credentials or token data.\n"
-            f"    -> `{str(e)}`\n\n"
-            "`if you copy paste from 'auth.txt' file and still error "
-            "try use MiXplorer file manager and open as code editor or "
-            "if you don't want to download just run command`\n"
-            ">`.term cat auth.txt`\n"
-            "Cp and paste to `G_DRIVE_AUTH_TOKEN_DATA` heroku ConfigVars or\n"
-            ">`.set var G_DRIVE_AUTH_TOKEN_DATA <token you get>`\n\n"
-            "Or if you still have value from old module remove it first!, "
-            "because my module use v3 api while the old is using v2 api...\n"
-            ">`.del var G_DRIVE_AUTH_TOKEN_DATA` to delete the old token data."
+    async with gdrive.client.conversation(BOTLOG_CHATID) as conv:
+        await conv.send_message(
+            "Please go to this URL:\n"
+            f"{auth_url}\nauthorize then reply the code"
         )
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            await gdrive.edit("`Refreshing credentials...`")
-            """ - Refresh credentials - """
-            creds.refresh(Request())
-        else:
-            """ - Create credentials - """
-            await gdrive.edit("`Creating credentials...`")
-            flow = InstalledAppFlow.from_client_config(
-                 configs, SCOPES, redirect_uri=REDIRECT_URI)
-            auth_url, _ = flow.authorization_url(
-                        access_type='offline', prompt='consent')
-            msg = await gdrive.respond(
-                "`Go to your BOTLOG chat to authenticate`"
-                " **G_DRIVE_AUTH_TOKEN_DATA**."
-            )
-            async with gdrive.client.conversation(BOTLOG_CHATID) as conv:
-                await conv.send_message(
-                    "Please go to this URL:\n"
-                    f"{auth_url}\nauthorize then reply the code"
-                )
-                r = conv.wait_event(
-                  events.NewMessage(outgoing=True, chats=BOTLOG_CHATID))
-                r = await r
-                code = r.message.message.strip()
-                flow.fetch_token(code=code)
-                creds = flow.credentials
-                await gdrive.client.delete_messages(gdrive.chat_id, msg.id)
-            """ - Unpack credential objects into strings - """
-            if G_DRIVE_AUTH_TOKEN_DATA is None:
-                with open("auth.txt", "w") as f:
-                    pickled = codecs.encode(
-                            pickle.dumps(creds), "base64").decode()
-                    """ - Put into file to use it later - """
-                    f.write(pickled)
-            await gdrive.client.send_file(
-                BOTLOG_CHATID, "auth.txt",
-                caption=("This is your `G_DRIVE_AUTH_TOKEN_DATA`, "
-                         "open then copy and paste to your heroku ConfigVars, "
-                         "or do:\n>`.set var G_DRIVE_AUTH_TOKEN_DATA "
-                         "<value inside auth.txt>`.")
-            )
-            msg = await gdrive.respond(
-                "`Go to your BOTLOG chat to get` **G_DRIVE_AUTH_TOKEN_DATA**\n"
-                "`The next time you called the command you didn't need to "
-                "authenticate anymore as long there is a valid file 'auth.txt'"
-                " or, you already put the value from 'auth.txt'"
-                " to your heroku app ConfigVars.` **G_DRIVE_AUTH_TOKEN_DATA**."
-            )
-            await asyncio.sleep(3.5)
-            await gdrive.client.delete_messages(gdrive.chat_id, msg.id)
+        r = conv.wait_event(
+          events.NewMessage(outgoing=True, chats=BOTLOG_CHATID))
+        r = await r
+        code = r.message.message.strip()
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        decoded_creds = base64.b64encode(pickle.dumps(creds))
+        sql.save_credentials(gdrive.from_id, decoded_creds)
+    await asyncio.sleep(3.5)
+    await gdrive.client.delete_messages(gdrive.chat_id, msg.id)
+    await gdrive.edit("`Credentials created...`")
+    return creds
+
+
+@register(pattern="^.gdreset$", outgoing=True)
+async def reset_credentials(gdrive):
+    """ - This allow user to reset credentials - """
+    sql.clearcredentials(gdrive.from_id)
+
+
+@register(pattern="^.gdauth$", outgoing=True)
+async def create_credentials(gdrive):
+    " - This allow user to generate credentials - """
+    creds = sql.get_credentials(gdrive.from_id)
+    if not creds:
+        creds = await generate_credentials(gdrive)
     return creds
 
 
 async def create_app(gdrive):
     """ - Create google drive service app - """
-    creds = await generate_credentials(gdrive)
+    try:
+        creds = pickle.loads(base64.b64decode(
+             sql.get_credentials(gdrive.from_id)))
+    except TypeError:
+        creds = None
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            await gdrive.edit("`Refreshing credentials...`")
+            """ - Refresh credentials - """
+            creds.refresh(Request())
+            sql.save_credentials(gdrive.from_id, creds)
+    else:
+        creds = await generate_credentials(gdrive)
+    if creds is None:
+        return("`Failed to load credentials...`")
     service = build('drive', 'v3', credentials=creds, cache_discovery=False)
     return service
 

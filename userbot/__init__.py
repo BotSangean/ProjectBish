@@ -146,6 +146,8 @@ G_DRIVE_AUTH_TOKEN_DATA = os.environ.get("G_DRIVE_AUTH_TOKEN_DATA", None)
 G_DRIVE_FOLDER_ID = os.environ.get("G_DRIVE_FOLDER_ID", None)
 TEMP_DOWNLOAD_DIRECTORY = os.environ.get("TMP_DOWNLOAD_DIRECTORY",
                                          "./downloads")
+""" - This include G_DRIVE_CLIENT_ID and G_DRIVE_CLIENT_SECRET - """
+G_DRIVE_DATA = os.environ.get("G_DRIVE_DATA", None)
 
 # Terminal Alias
 TERM_ALIAS = os.environ.get("TERM_ALIAS", None)
